@@ -60,6 +60,7 @@
     import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
     import { getAuth } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
 
+    // --- Firebase Config ---
     const firebaseConfig = {
       apiKey: "AIzaSyBujiz5R1qEHcLvlMp9fQIViIMuWs3gRZk",
       authDomain: "cam-attendance-a4881.firebaseapp.com",
@@ -72,6 +73,7 @@
     const app = initializeApp(firebaseConfig);
     const auth = getAuth(app);
 
+    // --- Elements ---
     const videoEl = document.getElementById("video");
     const circleCanvas = document.getElementById("circle_canvas");
     const snapCanvas = document.getElementById("snap_canvas");
@@ -85,6 +87,7 @@
     const snapCtx = snapCanvas.getContext("2d");
     const captured = {};
 
+    // --- Canvas Setup ---
     let cssW = 0, cssH = 0, dpr = window.devicePixelRatio || 1;
     function resizeCanvas() {
       const rect = circleCanvas.getBoundingClientRect();
@@ -98,6 +101,7 @@
     window.addEventListener("resize", resizeCanvas);
     requestAnimationFrame(resizeCanvas);
 
+    // --- Capture Photo ---
     captureBtn.addEventListener("click", () => {
       if (!videoEl.videoWidth || !videoEl.videoHeight) {
         instr.textContent = "Camera not active or not detected.";
@@ -119,9 +123,10 @@
       previewBar.appendChild(img);
 
       instr.textContent = `Captured (${Object.keys(captured).length})`;
-      if (Object.keys(captured).length > 0) submitBtn.classList.remove("hidden");
+      submitBtn.classList.remove("hidden");
     });
 
+    // --- Camera Start/Stop ---
     let camera = null;
     async function startCamera() {
       try {
@@ -131,7 +136,6 @@
         instr.textContent = "Camera error: " + e.message;
       }
     }
-
     function stopCamera() {
       try {
         if (camera && camera.stop) camera.stop();
@@ -142,12 +146,12 @@
         }
       } catch (e) {}
     }
-
     cancelBtn.addEventListener("click", () => {
       stopCamera();
       instr.textContent = "Enrollment cancelled";
     });
 
+    // --- Google Drive Upload ---
     submitBtn.addEventListener("click", async () => {
       if (Object.keys(captured).length === 0) {
         instr.textContent = "Please capture at least one photo.";
@@ -204,12 +208,14 @@
         const form = new FormData();
         form.append("metadata", new Blob([JSON.stringify(metadata)], { type: "application/json" }));
         form.append("file", blob);
-        await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart", {
+        const upload = await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart", {
           method: "POST",
           headers: { Authorization: "Bearer " + accessToken },
           body: form,
         });
-        console.log(`✅ Uploaded ${pose} to https://drive.google.com/drive/folders/${studentId}`);
+        if (upload.ok) {
+          console.log(`✅ Uploaded ${pose} → https://drive.google.com/drive/folders/${studentId}`);
+        }
       }
 
       instr.innerHTML = `✅ Uploaded successfully! 
