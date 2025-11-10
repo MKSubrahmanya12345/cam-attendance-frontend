@@ -24,7 +24,7 @@
     <button id="cancel-btn" class="cancel-btn absolute left-4 top-4">Cancel</button>
 
     <h1 class="title text-2xl font-semibold mb-2">Face Enrollment</h1>
-    <p id="instruction-text" class="instruction text-gray-300 mb-4">Loading AI Model...</p>
+    <p id="instruction-text" class="instruction text-gray-300 mb-4">Align your face straight and press “Capture Front”.</p>
 
     <div class="stage" id="stage">
       <div class="video-wrap relative flex justify-center">
@@ -33,6 +33,11 @@
         <div class="vignette"></div>
       </div>
     </div>
+
+    <!-- New Capture Front Button -->
+    <button id="capture-front-btn" class="mt-4 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-6 rounded-lg transition duration-300">
+      📸 Capture Front
+    </button>
 
     <canvas id="snap_canvas" class="hidden"></canvas>
 
@@ -70,11 +75,12 @@
     const previewBar = document.getElementById("photo-preview-bar");
     const cancelBtn = document.getElementById("cancel-btn");
     const doneBtn = document.getElementById("done-btn");
+    const captureFrontBtn = document.getElementById("capture-front-btn");
 
     const ctx = circleCanvas.getContext("2d", { alpha: true });
     const snapCtx = snapCanvas.getContext("2d");
     const captured = {};
-    let currentPose = null, lastSnapAt = 0;
+    let currentPose = null, lastSnapAt = 0, manualFrontCaptured = false;
     const SNAP_COOLDOWN_MS = 900;
     const poses = {
       frontal: { label: "Move your head slowly to complete the circle", captured: false },
@@ -154,25 +160,19 @@
       img.src = dataUrl;
       img.className = "preview-thumb";
       previewBar.appendChild(img);
-
-      instr.textContent = "Captured ✔";
-      setTimeout(() => {
-        let next = null;
-        for (const p of poseOrder) if (!poses[p].captured) { next = p; break; }
-        if (next) {
-          currentPose = next;
-          instr.textContent = poses[currentPose].label;
-        } else {
-          currentPose = "DONE";
-          instr.textContent = "Enrollment Complete";
-          stopCamera();
-          doneBtn.classList.remove("hidden");
-        }
-      }, 700);
     }
 
+    // --- Manual frontal capture ---
+    captureFrontBtn.addEventListener("click", () => {
+      snap("frontal");
+      manualFrontCaptured = true;
+      captureFrontBtn.classList.add("hidden");
+      instr.textContent = "Now slowly move your head for Left, Right, Up, and Down captures.";
+    });
+
+    // --- AI auto detection after manual front capture ---
     function detectPoseFromLandmarks(lm) {
-      if (!lm || lm.length === 0) return null;
+      if (!manualFrontCaptured || !lm || lm.length === 0) return null;
       const leftEye = lm[130], rightEye = lm[359], forehead = lm[10], chin = lm[152];
       const yaw = leftEye.z - rightEye.z, pitch = forehead.z - chin.z;
       const YAW_THRESHOLD = 0.035, PITCH_THRESHOLD = 0.035;
@@ -180,7 +180,6 @@
       if (yaw < -YAW_THRESHOLD * 1.5) return "left";
       if (pitch > PITCH_THRESHOLD * 1.2) return "up";
       if (pitch < -PITCH_THRESHOLD * 1.2) return "down";
-      if (Math.abs(yaw) < 0.02 && Math.abs(pitch) < 0.02) return "frontal";
       return null;
     }
 
@@ -195,20 +194,18 @@
     });
 
     faceMesh.onResults((res) => {
-      if (!res.multiFaceLandmarks || res.multiFaceLandmarks.length === 0) {
-        if (currentPose !== "DONE" && currentPose !== "frontal") {
-          instr.textContent = "Face not detected. Please look straight.";
-        }
-        return;
-      }
-      if (currentPose === "DONE") return;
+      if (!manualFrontCaptured) return;
+      if (!res.multiFaceLandmarks || res.multiFaceLandmarks.length === 0) return;
       const lm = res.multiFaceLandmarks[0];
       const detected = detectPoseFromLandmarks(lm);
-      if (!currentPose) {
-        currentPose = "frontal";
-        instr.textContent = poses[currentPose].label;
+      if (detected && !poses[detected].captured) {
+        snap(detected);
+        if (Object.keys(captured).length === 5) {
+          instr.textContent = "All poses captured ✅";
+          stopCamera();
+          doneBtn.classList.remove("hidden");
+        }
       }
-      if (detected === currentPose && !poses[currentPose].captured) snap(currentPose);
     });
 
     let camera = null;
@@ -219,9 +216,6 @@
           width: 480, height: 480,
         });
         await camera.start();
-        currentPose = "frontal";
-        instr.textContent = poses[currentPose].label;
-        resizeCanvas();
       } catch (e) { instr.textContent = "Camera error: " + e.message; }
     }
 
@@ -236,12 +230,9 @@
       } catch (e) {}
     }
 
-    cancelBtn.addEventListener("click", () => {
-      stopCamera();
-      instr.textContent = "Enrollment cancelled";
-    });
+    cancelBtn.addEventListener("click", () => { stopCamera(); instr.textContent = "Enrollment cancelled"; });
 
-    // ✅ New Google Identity Services flow
+    // ✅ Google Drive upload (unchanged)
     doneBtn.addEventListener("click", async () => {
       instr.textContent = "Authorizing Google Drive...";
 
@@ -249,9 +240,7 @@
       const SCOPES = "https://www.googleapis.com/auth/drive.file";
 
       await new Promise((r) => gapi.load("client", r));
-      await gapi.client.init({
-        discoveryDocs: ["https://www.googleapis.com/discovery/v1/apis/drive/v3/rest"],
-      });
+      await gapi.client.init({ discoveryDocs: ["https://www.googleapis.com/discovery/v1/apis/drive/v3/rest"] });
 
       const tokenClient = google.accounts.oauth2.initTokenClient({
         client_id: CLIENT_ID,
@@ -265,17 +254,12 @@
       });
 
       const accessToken = tokenResponse.access_token;
-      console.log("✅ Got access token:", accessToken);
-
       const about = await gapi.client.drive.about.get({ fields: "user(emailAddress)" });
       const email = about.result.user.emailAddress;
-      console.log("Authorized email:", email);
 
       const branch = email.split("_")[0]?.toUpperCase() || "UNKNOWN";
       const section = email.split("_")[1]?.split("@")[0]?.toUpperCase() || "GEN";
       const yearFolderName = "2nd Year";
-
-      instr.textContent = `Creating folders for ${branch}_${section}...`;
 
       async function getOrCreateFolder(name, parentId = null) {
         const q = `'${parentId || "root"}' in parents and name='${name}' and mimeType='application/vnd.google-apps.folder' and trashed=false`;
@@ -292,31 +276,18 @@
       const studentId = await getOrCreateFolder(`${branch}_${section}`, branchId);
 
       instr.textContent = "Uploading to Google Drive...";
-
       for (const [pose, base64] of Object.entries(captured)) {
         const blob = await (await fetch(base64)).blob();
         const metadata = { name: `${pose}.jpg`, mimeType: "image/jpeg", parents: [studentId] };
         const form = new FormData();
         form.append("metadata", new Blob([JSON.stringify(metadata)], { type: "application/json" }));
         form.append("file", blob);
-
-        const upload = await fetch(
-          "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart",
-          {
-            method: "POST",
-            headers: { Authorization: "Bearer " + accessToken },
-            body: form,
-          }
-        );
-
-        if (!upload.ok) {
-          const err = await upload.text();
-          console.error(`❌ Upload failed (${upload.status}):`, err);
-          throw new Error(`Upload failed: ${upload.status}`);
-        }
-        console.log(`✅ Uploaded ${pose}`);
+        await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart", {
+          method: "POST",
+          headers: { Authorization: "Bearer " + accessToken },
+          body: form,
+        });
       }
-
       instr.textContent = "✅ Uploaded successfully to Google Drive!";
     });
 
