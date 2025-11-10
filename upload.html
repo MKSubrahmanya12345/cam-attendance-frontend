@@ -5,39 +5,42 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Face Enrollment — Magic Circle</title>
 
-  <!-- Tailwind and MediaPipe -->
+  <!-- Tailwind -->
   <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- MediaPipe -->
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
 
-  <!-- External CSS -->
-  <link rel="stylesheet" href="styles.css">
+  <!-- Google APIs -->
+  <script async defer src="https://apis.google.com/js/api.js"></script>
+  <script async defer src="https://accounts.google.com/gsi/client"></script>
+
+  <link rel="stylesheet" href="styles.css" />
 </head>
+
 <body class="faceid-bg min-h-screen flex items-center justify-center p-6">
   <div class="w-full max-w-xl rounded-lg p-6 text-center shadow-xl relative ui-shell">
-    <!-- Cancel (top-left) -->
-    <button id="cancel-btn" class="cancel-btn">Cancel</button>
+    <button id="cancel-btn" class="cancel-btn absolute left-4 top-4">Cancel</button>
 
-    <h1 class="title">Face Enrollment</h1>
-    <p id="instruction-text" class="instruction">Loading AI Model...</p>
+    <h1 class="title text-2xl font-semibold mb-2">Face Enrollment</h1>
+    <p id="instruction-text" class="instruction text-gray-300 mb-4">Loading AI Model...</p>
 
     <div class="stage" id="stage">
-      <div class="video-wrap">
+      <div class="video-wrap relative flex justify-center">
         <video id="video" autoplay muted playsinline></video>
         <canvas id="circle_canvas"></canvas>
         <div class="vignette"></div>
       </div>
     </div>
 
-    <canvas id="snap_canvas"></canvas>
+    <canvas id="snap_canvas" class="hidden"></canvas>
 
-    <p class="caption">Captured Images</p>
-    <div id="photo-preview-bar" class="preview-bar flex justify-center gap-2 mt-2 h-16">
-        <!-- Previews will be added here -->
-    </div>
+    <p class="caption mt-4 text-sm text-gray-400">Captured Images</p>
+    <div id="photo-preview-bar" class="preview-bar flex justify-center gap-2 mt-2 h-16"></div>
 
-    <div class="done-wrap">
-      <button id="done-btn" class="done-btn hidden">Done</button>
+    <div class="done-wrap mt-6">
+      <button id="done-btn" class="done-btn hidden bg-green-600 text-white px-4 py-2 rounded-lg">Done</button>
     </div>
   </div>
 
@@ -46,101 +49,88 @@
     import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
     import { getAuth } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
 
-const firebaseConfig = {
-        apiKey: "AIzaSyBujiz5R1qEHcLvlMp9fQIViIMuWs3gRZk",
-        authDomain: "cam-attendance-a4881.firebaseapp.com",
-        projectId: "cam-attendance-a4881",
-        storageBucket: "cam-attendance-a4881.appspot.com",
-        messagingSenderId: "344849505667",
-        appId: "1:344849505667:web:9a8ddb0a009f458fca2ab6",
-        measurementId: "G-RLBS140J6Y",
-      };
-
+    // --- Firebase ---
+    const firebaseConfig = {
+      apiKey: "AIzaSyBujiz5R1qEHcLvlMp9fQIViIMuWs3gRZk",
+      authDomain: "cam-attendance-a4881.firebaseapp.com",
+      projectId: "cam-attendance-a4881",
+      storageBucket: "cam-attendance-a4881.appspot.com",
+      messagingSenderId: "344849505667",
+      appId: "1:344849505667:web:9a8ddb0a009f458fca2ab6",
+      measurementId: "G-RLBS140J6Y",
+    };
     const app = initializeApp(firebaseConfig);
     const auth = getAuth(app);
 
-    // ELEMENTS
-    const videoEl = document.getElementById('video');
-    const circleCanvas = document.getElementById('circle_canvas');
-    const snapCanvas = document.getElementById('snap_canvas');
-    const instr = document.getElementById('instruction-text');
-    const previewBar = document.getElementById('photo-preview-bar');
-    const cancelBtn = document.getElementById('cancel-btn');
-    const doneBtn = document.getElementById('done-btn');
+    // --- DOM elements ---
+    const videoEl = document.getElementById("video");
+    const circleCanvas = document.getElementById("circle_canvas");
+    const snapCanvas = document.getElementById("snap_canvas");
+    const instr = document.getElementById("instruction-text");
+    const previewBar = document.getElementById("photo-preview-bar");
+    const cancelBtn = document.getElementById("cancel-btn");
+    const doneBtn = document.getElementById("done-btn");
 
-    const ctx = circleCanvas.getContext('2d', { alpha: true });
-    const snapCtx = snapCanvas.getContext('2d');
-
+    const ctx = circleCanvas.getContext("2d", { alpha: true });
+    const snapCtx = snapCanvas.getContext("2d");
     const captured = {};
-    let currentPose = null;
-    let lastSnapAt = 0;
+    let currentPose = null, lastSnapAt = 0;
     const SNAP_COOLDOWN_MS = 900;
     const poses = {
-      frontal: { label: 'Move your head slowly to complete the circle', captured: false },
-      left: { label: 'Look Left', captured: false },
-      right: { label: 'Look Right', captured: false },
-      up: { label: 'Look Up', captured: false },
-      down: { label: 'Look Down', captured: false }
+      frontal: { label: "Move your head slowly to complete the circle", captured: false },
+      left: { label: "Look Left", captured: false },
+      right: { label: "Look Right", captured: false },
+      up: { label: "Look Up", captured: false },
+      down: { label: "Look Down", captured: false },
     };
-    const poseOrder = ['frontal','left','right','up','down'];
+    const poseOrder = ["frontal", "left", "right", "up", "down"];
 
+    // --- Canvas setup ---
     let cssW = 0, cssH = 0, dpr = window.devicePixelRatio || 1;
     function resizeCanvas() {
       const rect = circleCanvas.getBoundingClientRect();
       if (!rect) return;
-      cssW = rect.width;
-      cssH = rect.height;
+      cssW = rect.width; cssH = rect.height;
       dpr = window.devicePixelRatio || 1;
       circleCanvas.width = Math.round(cssW * dpr);
       circleCanvas.height = Math.round(cssH * dpr);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     }
-    window.addEventListener('resize', resizeCanvas);
+    window.addEventListener("resize", resizeCanvas);
     requestAnimationFrame(resizeCanvas);
 
-    function draw(progressAngle = 0, showAnim = true) {
-      ctx.clearRect(0,0,cssW,cssH);
-      const cx = cssW/2, cy = cssH/2;
-      if (cx === 0 || cy === 0) return;
+    function draw(progressAngle = 0) {
+      ctx.clearRect(0, 0, cssW, cssH);
+      const cx = cssW / 2, cy = cssH / 2;
       const radius = Math.min(cssW, cssH) * 0.42;
-
       ctx.beginPath();
-      ctx.arc(cx, cy, radius + 6, 0, Math.PI*2);
+      ctx.arc(cx, cy, radius + 6, 0, Math.PI * 2);
       ctx.lineWidth = 2;
-      ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+      ctx.strokeStyle = "rgba(255,255,255,0.06)";
       ctx.stroke();
-
       if (progressAngle > 0) {
         ctx.beginPath();
-        ctx.arc(cx, cy, radius, -Math.PI/2, -Math.PI/2 + progressAngle, false);
+        ctx.arc(cx, cy, radius, -Math.PI / 2, -Math.PI / 2 + progressAngle, false);
         ctx.lineWidth = 6;
-        ctx.strokeStyle = '#32ff85';
+        ctx.strokeStyle = "#32ff85";
         ctx.shadowBlur = 6;
-        ctx.shadowColor = 'rgba(50,255,133,0.8)';
+        ctx.shadowColor = "rgba(50,255,133,0.8)";
         ctx.stroke();
         ctx.shadowBlur = 0;
-      } else {
-        ctx.beginPath();
-        ctx.arc(cx, cy, radius, -Math.PI/2, Math.PI*3/2);
-        ctx.lineWidth = 6;
-        ctx.strokeStyle = 'rgba(255,255,255,0.08)';
-        ctx.stroke();
       }
-
       ctx.save();
-      ctx.fillStyle = 'rgba(0,0,0,0.6)';
-      ctx.fillRect(0,0,cssW,cssH);
-      ctx.globalCompositeOperation = 'destination-out';
+      ctx.fillStyle = "rgba(0,0,0,0.6)";
+      ctx.fillRect(0, 0, cssW, cssH);
+      ctx.globalCompositeOperation = "destination-out";
       ctx.beginPath();
-      ctx.arc(cx, cy, radius * 0.96, 0, Math.PI*2);
+      ctx.arc(cx, cy, radius * 0.96, 0, Math.PI * 2);
       ctx.fill();
       ctx.restore();
     }
 
-    let lastAnimTime = performance.now();
-    function loop(now) {
+    function loop() {
       const progress = (Object.keys(captured).length / poseOrder.length) * Math.PI * 2;
-      draw(progress, currentPose !== 'DONE');
+      draw(progress);
       requestAnimationFrame(loop);
     }
     requestAnimationFrame(loop);
@@ -154,136 +144,180 @@ const firebaseConfig = {
 
       poses[poseName].captured = true;
       const vW = videoEl.videoWidth, vH = videoEl.videoHeight;
-      snapCanvas.width = vW;
-      snapCanvas.height = vH;
-      snapCtx.save();
-      snapCtx.translate(vW,0);
-      snapCtx.scale(-1,1);
-      snapCtx.drawImage(videoEl,0,0,vW,vH);
-      snapCtx.restore();
+      snapCanvas.width = vW; snapCanvas.height = vH;
+      snapCtx.save(); snapCtx.translate(vW, 0); snapCtx.scale(-1, 1);
+      snapCtx.drawImage(videoEl, 0, 0, vW, vH); snapCtx.restore();
 
-      const dataUrl = snapCanvas.toDataURL('image/jpeg',0.9);
-      captured[poseName]=dataUrl;
-      const img = document.createElement('img');
-      img.src=dataUrl;
-      img.className = 'preview-thumb';
+      const dataUrl = snapCanvas.toDataURL("image/jpeg", 0.9);
+      captured[poseName] = dataUrl;
+      const img = document.createElement("img");
+      img.src = dataUrl;
+      img.className = "preview-thumb";
       previewBar.appendChild(img);
 
-      instr.textContent="Captured ✔";
-      setTimeout(()=>{
-        let next=null;
-        for(const p of poseOrder) if(!poses[p].captured){ next=p; break;}
-        if(next){ currentPose=next; instr.textContent=poses[currentPose].label; }
-        else {
-          currentPose='DONE';
-          instr.textContent='Enrollment Complete';
+      instr.textContent = "Captured ✔";
+      setTimeout(() => {
+        let next = null;
+        for (const p of poseOrder) if (!poses[p].captured) { next = p; break; }
+        if (next) {
+          currentPose = next;
+          instr.textContent = poses[currentPose].label;
+        } else {
+          currentPose = "DONE";
+          instr.textContent = "Enrollment Complete";
           stopCamera();
-          doneBtn.classList.remove('hidden');
+          doneBtn.classList.remove("hidden");
         }
-      },700);
+      }, 700);
     }
 
     function detectPoseFromLandmarks(lm) {
       if (!lm || lm.length === 0) return null;
       const leftEye = lm[130], rightEye = lm[359], forehead = lm[10], chin = lm[152];
-      const yaw = leftEye.z - rightEye.z;
-      const pitch = forehead.z - chin.z;
+      const yaw = leftEye.z - rightEye.z, pitch = forehead.z - chin.z;
       const YAW_THRESHOLD = 0.035, PITCH_THRESHOLD = 0.035;
-
-      if (yaw > YAW_THRESHOLD * 1.5) return 'right';
-      if (yaw < -YAW_THRESHOLD * 1.5) return 'left';
-      if (pitch > PITCH_THRESHOLD * 1.2) return 'up';
-      if (pitch < -PITCH_THRESHOLD * 1.2) return 'down';
-      if (Math.abs(yaw) < 0.02 && Math.abs(pitch) < 0.02) return 'frontal';
+      if (yaw > YAW_THRESHOLD * 1.5) return "right";
+      if (yaw < -YAW_THRESHOLD * 1.5) return "left";
+      if (pitch > PITCH_THRESHOLD * 1.2) return "up";
+      if (pitch < -PITCH_THRESHOLD * 1.2) return "down";
+      if (Math.abs(yaw) < 0.02 && Math.abs(pitch) < 0.02) return "frontal";
       return null;
     }
 
-    const faceMesh=new FaceMesh({
-      locateFile:(file)=>`https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
+    const faceMesh = new FaceMesh({
+      locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}`,
     });
     faceMesh.setOptions({
-      maxNumFaces:1, refineLandmarks:true,
-      minDetectionConfidence:0.5, minTrackingConfidence:0.5
+      maxNumFaces: 1,
+      refineLandmarks: true,
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5,
     });
 
-    faceMesh.onResults((res)=>{
-      if(!res.multiFaceLandmarks||res.multiFaceLandmarks.length===0) {
-        if (currentPose !== 'DONE' && currentPose !== 'frontal') {
+    faceMesh.onResults((res) => {
+      if (!res.multiFaceLandmarks || res.multiFaceLandmarks.length === 0) {
+        if (currentPose !== "DONE" && currentPose !== "frontal") {
           instr.textContent = "Face not detected. Please look straight.";
         }
         return;
       }
-      if(currentPose==='DONE') return;
-      const lm=res.multiFaceLandmarks[0];
-      const detected=detectPoseFromLandmarks(lm);
-      if(!currentPose){
-        currentPose='frontal';
-        instr.textContent=poses[currentPose].label;
+      if (currentPose === "DONE") return;
+      const lm = res.multiFaceLandmarks[0];
+      const detected = detectPoseFromLandmarks(lm);
+      if (!currentPose) {
+        currentPose = "frontal";
+        instr.textContent = poses[currentPose].label;
       }
-      if(detected===currentPose && !poses[currentPose].captured) snap(currentPose);
+      if (detected === currentPose && !poses[currentPose].captured) snap(currentPose);
     });
 
-    let camera=null;
-    async function startCamera(){
-      try{
-        camera=new Camera(videoEl,{
-          onFrame:async()=>{await faceMesh.send({image:videoEl});},
-          width:480,height:480
+    let camera = null;
+    async function startCamera() {
+      try {
+        camera = new Camera(videoEl, {
+          onFrame: async () => { await faceMesh.send({ image: videoEl }); },
+          width: 480, height: 480,
         });
         await camera.start();
-        currentPose='frontal';
-        instr.textContent=poses[currentPose].label;
+        currentPose = "frontal";
+        instr.textContent = poses[currentPose].label;
         resizeCanvas();
-      }catch(e){ instr.textContent='Camera error: ' + e.message; }
+      } catch (e) { instr.textContent = "Camera error: " + e.message; }
     }
 
-    function stopCamera(){
-      try{
-        if(camera&&camera.stop) camera.stop();
-        if(videoEl.srcObject){
-          const s=videoEl.srcObject;
-          if(s.getTracks) s.getTracks().forEach(t=>t.stop());
-          videoEl.srcObject=null;
+    function stopCamera() {
+      try {
+        if (camera && camera.stop) camera.stop();
+        if (videoEl.srcObject) {
+          const s = videoEl.srcObject;
+          if (s.getTracks) s.getTracks().forEach(t => t.stop());
+          videoEl.srcObject = null;
         }
-      }catch(e){}
+      } catch (e) {}
     }
 
-    cancelBtn.addEventListener('click', () => {
+    cancelBtn.addEventListener("click", () => {
       stopCamera();
-      instr.textContent = 'Enrollment cancelled';
+      instr.textContent = "Enrollment cancelled";
     });
 
-    // ✅ UPDATED DONE BUTTON LOGIC
-    doneBtn.addEventListener('click', async () => {
-      instr.textContent = 'Uploading...';
+    // ✅ New Google Identity Services flow
+    doneBtn.addEventListener("click", async () => {
+      instr.textContent = "Authorizing Google Drive...";
 
-      try {
-        const user = auth.currentUser;
-        if (!user) {
-          instr.textContent = 'Not logged in.';
-          return;
-        }
+      const CLIENT_ID = "391305144947-10kjh8tk1ng6vks4ipkd3fi15jmh8dv9.apps.googleusercontent.com";
+      const SCOPES = "https://www.googleapis.com/auth/drive.file";
 
-        const token = await user.getIdToken();
+      await new Promise((r) => gapi.load("client", r));
+      await gapi.client.init({
+        discoveryDocs: ["https://www.googleapis.com/discovery/v1/apis/drive/v3/rest"],
+      });
 
-        const res = await fetch("https://cam-attendance-backend.up.railway.app/enroll", {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer ' + token
-          },
-          body: JSON.stringify({ images: Object.values(captured) })
-        });
+      const tokenClient = google.accounts.oauth2.initTokenClient({
+        client_id: CLIENT_ID,
+        scope: SCOPES,
+        callback: (res) => {},
+      });
 
-        const result = await res.json();
-        if (result.status === 'success') {
-          instr.textContent = '✅ Enrollment uploaded successfully!';
-        } else {
-          instr.textContent = '❌ Upload failed: ' + result.message;
-        }
-      } catch (err) {
-        instr.textContent = '❌ Error: ' + err.message;
+      const tokenResponse = await new Promise((resolve) => {
+        tokenClient.callback = (res) => resolve(res);
+        tokenClient.requestAccessToken({ prompt: "consent" });
+      });
+
+      const accessToken = tokenResponse.access_token;
+      console.log("✅ Got access token:", accessToken);
+
+      const about = await gapi.client.drive.about.get({ fields: "user(emailAddress)" });
+      const email = about.result.user.emailAddress;
+      console.log("Authorized email:", email);
+
+      const branch = email.split("_")[0]?.toUpperCase() || "UNKNOWN";
+      const section = email.split("_")[1]?.split("@")[0]?.toUpperCase() || "GEN";
+      const yearFolderName = "2nd Year";
+
+      instr.textContent = `Creating folders for ${branch}_${section}...`;
+
+      async function getOrCreateFolder(name, parentId = null) {
+        const q = `'${parentId || "root"}' in parents and name='${name}' and mimeType='application/vnd.google-apps.folder' and trashed=false`;
+        const res = await gapi.client.drive.files.list({ q, fields: "files(id,name)" });
+        if (res.result.files?.length > 0) return res.result.files[0].id;
+        const folderMeta = { name, mimeType: "application/vnd.google-apps.folder" };
+        if (parentId) folderMeta.parents = [parentId];
+        const create = await gapi.client.drive.files.create({ resource: folderMeta, fields: "id" });
+        return create.result.id;
       }
+
+      const yearId = await getOrCreateFolder(yearFolderName);
+      const branchId = await getOrCreateFolder(branch, yearId);
+      const studentId = await getOrCreateFolder(`${branch}_${section}`, branchId);
+
+      instr.textContent = "Uploading to Google Drive...";
+
+      for (const [pose, base64] of Object.entries(captured)) {
+        const blob = await (await fetch(base64)).blob();
+        const metadata = { name: `${pose}.jpg`, mimeType: "image/jpeg", parents: [studentId] };
+        const form = new FormData();
+        form.append("metadata", new Blob([JSON.stringify(metadata)], { type: "application/json" }));
+        form.append("file", blob);
+
+        const upload = await fetch(
+          "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart",
+          {
+            method: "POST",
+            headers: { Authorization: "Bearer " + accessToken },
+            body: form,
+          }
+        );
+
+        if (!upload.ok) {
+          const err = await upload.text();
+          console.error(`❌ Upload failed (${upload.status}):`, err);
+          throw new Error(`Upload failed: ${upload.status}`);
+        }
+        console.log(`✅ Uploaded ${pose}`);
+      }
+
+      instr.textContent = "✅ Uploaded successfully to Google Drive!";
     });
 
     startCamera();
