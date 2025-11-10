@@ -5,14 +5,10 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Face Enrollment — Magic Circle</title>
 
-  <!-- Tailwind -->
   <script src="https://cdn.tailwindcss.com"></script>
-
-  <!-- MediaPipe -->
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
 
-  <!-- Google APIs -->
   <script async defer src="https://apis.google.com/js/api.js"></script>
   <script async defer src="https://accounts.google.com/gsi/client"></script>
 
@@ -24,7 +20,9 @@
     <button id="cancel-btn" class="cancel-btn absolute left-4 top-4">Cancel</button>
 
     <h1 class="title text-2xl font-semibold mb-2">Face Enrollment</h1>
-    <p id="instruction-text" class="instruction text-gray-300 mb-4">Align your face straight and press “Capture Front”.</p>
+    <p id="instruction-text" class="instruction text-gray-300 mb-4">
+      Align your face and press “Capture Photo”.
+    </p>
 
     <div class="stage" id="stage">
       <div class="video-wrap relative flex justify-center">
@@ -34,18 +32,23 @@
       </div>
     </div>
 
-    <!-- New Capture Front Button -->
-    <button id="capture-front-btn" class="mt-4 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-6 rounded-lg transition duration-300">
-      📸 Capture Front
-    </button>
-
     <canvas id="snap_canvas" class="hidden"></canvas>
 
-    <p class="caption mt-4 text-sm text-gray-400">Captured Images</p>
-    <div id="photo-preview-bar" class="preview-bar flex justify-center gap-2 mt-2 h-16"></div>
+    <!-- 📸 Manual Capture Button -->
+    <button id="capture-btn"
+      class="mt-4 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-6 rounded-lg transition duration-300">
+      📸 Capture Photo
+    </button>
 
+    <p class="caption mt-4 text-sm text-gray-400">Captured Images</p>
+    <div id="photo-preview-bar" class="preview-bar flex justify-center gap-2 mt-2 h-16 overflow-x-auto"></div>
+
+    <!-- ✅ Submit Button -->
     <div class="done-wrap mt-6">
-      <button id="done-btn" class="done-btn hidden bg-green-600 text-white px-4 py-2 rounded-lg">Done</button>
+      <button id="submit-btn"
+        class="hidden bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg transition duration-300">
+        ✅ Submit to Google Drive
+      </button>
     </div>
   </div>
 
@@ -54,7 +57,7 @@
     import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
     import { getAuth } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
 
-    // --- Firebase ---
+    // Firebase config
     const firebaseConfig = {
       apiKey: "AIzaSyBujiz5R1qEHcLvlMp9fQIViIMuWs3gRZk",
       authDomain: "cam-attendance-a4881.firebaseapp.com",
@@ -67,31 +70,21 @@
     const app = initializeApp(firebaseConfig);
     const auth = getAuth(app);
 
-    // --- DOM elements ---
+    // DOM elements
     const videoEl = document.getElementById("video");
     const circleCanvas = document.getElementById("circle_canvas");
     const snapCanvas = document.getElementById("snap_canvas");
+    const captureBtn = document.getElementById("capture-btn");
+    const submitBtn = document.getElementById("submit-btn");
     const instr = document.getElementById("instruction-text");
     const previewBar = document.getElementById("photo-preview-bar");
     const cancelBtn = document.getElementById("cancel-btn");
-    const doneBtn = document.getElementById("done-btn");
-    const captureFrontBtn = document.getElementById("capture-front-btn");
 
     const ctx = circleCanvas.getContext("2d", { alpha: true });
     const snapCtx = snapCanvas.getContext("2d");
     const captured = {};
-    let currentPose = null, lastSnapAt = 0, manualFrontCaptured = false;
-    const SNAP_COOLDOWN_MS = 900;
-    const poses = {
-      frontal: { label: "Move your head slowly to complete the circle", captured: false },
-      left: { label: "Look Left", captured: false },
-      right: { label: "Look Right", captured: false },
-      up: { label: "Look Up", captured: false },
-      down: { label: "Look Down", captured: false },
-    };
-    const poseOrder = ["frontal", "left", "right", "up", "down"];
 
-    // --- Canvas setup ---
+    // Canvas setup
     let cssW = 0, cssH = 0, dpr = window.devicePixelRatio || 1;
     function resizeCanvas() {
       const rect = circleCanvas.getBoundingClientRect();
@@ -105,50 +98,14 @@
     window.addEventListener("resize", resizeCanvas);
     requestAnimationFrame(resizeCanvas);
 
-    function draw(progressAngle = 0) {
-      ctx.clearRect(0, 0, cssW, cssH);
-      const cx = cssW / 2, cy = cssH / 2;
-      const radius = Math.min(cssW, cssH) * 0.42;
-      ctx.beginPath();
-      ctx.arc(cx, cy, radius + 6, 0, Math.PI * 2);
-      ctx.lineWidth = 2;
-      ctx.strokeStyle = "rgba(255,255,255,0.06)";
-      ctx.stroke();
-      if (progressAngle > 0) {
-        ctx.beginPath();
-        ctx.arc(cx, cy, radius, -Math.PI / 2, -Math.PI / 2 + progressAngle, false);
-        ctx.lineWidth = 6;
-        ctx.strokeStyle = "#32ff85";
-        ctx.shadowBlur = 6;
-        ctx.shadowColor = "rgba(50,255,133,0.8)";
-        ctx.stroke();
-        ctx.shadowBlur = 0;
+    // Manual capture
+    captureBtn.addEventListener("click", () => {
+      if (!videoEl.videoWidth || !videoEl.videoHeight) {
+        instr.textContent = "Camera not active or not detected.";
+        return;
       }
-      ctx.save();
-      ctx.fillStyle = "rgba(0,0,0,0.6)";
-      ctx.fillRect(0, 0, cssW, cssH);
-      ctx.globalCompositeOperation = "destination-out";
-      ctx.beginPath();
-      ctx.arc(cx, cy, radius * 0.96, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-    }
 
-    function loop() {
-      const progress = (Object.keys(captured).length / poseOrder.length) * Math.PI * 2;
-      draw(progress);
-      requestAnimationFrame(loop);
-    }
-    requestAnimationFrame(loop);
-
-    function snap(poseName) {
-      if (!videoEl.videoWidth || !videoEl.videoHeight) return;
-      if (poses[poseName].captured) return;
-      const now = Date.now();
-      if (now - lastSnapAt < SNAP_COOLDOWN_MS) return;
-      lastSnapAt = now;
-
-      poses[poseName].captured = true;
+      const poseName = `photo_${Object.keys(captured).length + 1}`;
       const vW = videoEl.videoWidth, vH = videoEl.videoHeight;
       snapCanvas.width = vW; snapCanvas.height = vH;
       snapCtx.save(); snapCtx.translate(vW, 0); snapCtx.scale(-1, 1);
@@ -156,67 +113,28 @@
 
       const dataUrl = snapCanvas.toDataURL("image/jpeg", 0.9);
       captured[poseName] = dataUrl;
+
       const img = document.createElement("img");
       img.src = dataUrl;
-      img.className = "preview-thumb";
+      img.className = "preview-thumb w-16 h-16 object-cover rounded";
       previewBar.appendChild(img);
-    }
 
-    // --- Manual frontal capture ---
-    captureFrontBtn.addEventListener("click", () => {
-      snap("frontal");
-      manualFrontCaptured = true;
-      captureFrontBtn.classList.add("hidden");
-      instr.textContent = "Now slowly move your head for Left, Right, Up, and Down captures.";
+      instr.textContent = `Captured (${Object.keys(captured).length})`;
+      if (Object.keys(captured).length > 0) submitBtn.classList.remove("hidden");
     });
 
-    // --- AI auto detection after manual front capture ---
-    function detectPoseFromLandmarks(lm) {
-      if (!manualFrontCaptured || !lm || lm.length === 0) return null;
-      const leftEye = lm[130], rightEye = lm[359], forehead = lm[10], chin = lm[152];
-      const yaw = leftEye.z - rightEye.z, pitch = forehead.z - chin.z;
-      const YAW_THRESHOLD = 0.035, PITCH_THRESHOLD = 0.035;
-      if (yaw > YAW_THRESHOLD * 1.5) return "right";
-      if (yaw < -YAW_THRESHOLD * 1.5) return "left";
-      if (pitch > PITCH_THRESHOLD * 1.2) return "up";
-      if (pitch < -PITCH_THRESHOLD * 1.2) return "down";
-      return null;
-    }
-
-    const faceMesh = new FaceMesh({
-      locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}`,
-    });
-    faceMesh.setOptions({
-      maxNumFaces: 1,
-      refineLandmarks: true,
-      minDetectionConfidence: 0.5,
-      minTrackingConfidence: 0.5,
-    });
-
-    faceMesh.onResults((res) => {
-      if (!manualFrontCaptured) return;
-      if (!res.multiFaceLandmarks || res.multiFaceLandmarks.length === 0) return;
-      const lm = res.multiFaceLandmarks[0];
-      const detected = detectPoseFromLandmarks(lm);
-      if (detected && !poses[detected].captured) {
-        snap(detected);
-        if (Object.keys(captured).length === 5) {
-          instr.textContent = "All poses captured ✅";
-          stopCamera();
-          doneBtn.classList.remove("hidden");
-        }
-      }
-    });
-
+    // Start camera
     let camera = null;
     async function startCamera() {
       try {
         camera = new Camera(videoEl, {
-          onFrame: async () => { await faceMesh.send({ image: videoEl }); },
+          onFrame: async () => {},
           width: 480, height: 480,
         });
         await camera.start();
-      } catch (e) { instr.textContent = "Camera error: " + e.message; }
+      } catch (e) {
+        instr.textContent = "Camera error: " + e.message;
+      }
     }
 
     function stopCamera() {
@@ -230,17 +148,27 @@
       } catch (e) {}
     }
 
-    cancelBtn.addEventListener("click", () => { stopCamera(); instr.textContent = "Enrollment cancelled"; });
+    cancelBtn.addEventListener("click", () => {
+      stopCamera();
+      instr.textContent = "Enrollment cancelled";
+    });
 
-    // ✅ Google Drive upload (unchanged)
-    doneBtn.addEventListener("click", async () => {
+    // ✅ Google Drive upload
+    submitBtn.addEventListener("click", async () => {
+      if (Object.keys(captured).length === 0) {
+        instr.textContent = "Please capture at least one photo.";
+        return;
+      }
+
       instr.textContent = "Authorizing Google Drive...";
 
       const CLIENT_ID = "391305144947-10kjh8tk1ng6vks4ipkd3fi15jmh8dv9.apps.googleusercontent.com";
       const SCOPES = "https://www.googleapis.com/auth/drive.file";
 
       await new Promise((r) => gapi.load("client", r));
-      await gapi.client.init({ discoveryDocs: ["https://www.googleapis.com/discovery/v1/apis/drive/v3/rest"] });
+      await gapi.client.init({
+        discoveryDocs: ["https://www.googleapis.com/discovery/v1/apis/drive/v3/rest"],
+      });
 
       const tokenClient = google.accounts.oauth2.initTokenClient({
         client_id: CLIENT_ID,
@@ -288,6 +216,7 @@
           body: form,
         });
       }
+
       instr.textContent = "✅ Uploaded successfully to Google Drive!";
     });
 
